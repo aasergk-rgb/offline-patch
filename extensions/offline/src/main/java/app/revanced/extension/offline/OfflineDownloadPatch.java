@@ -31,7 +31,7 @@ public final class OfflineDownloadPatch {
      * @return If the download was handled and the original download logic must be skipped.
      */
     public static boolean onYouTubeDownload(String videoId) {
-        return launchDownloader("https://youtu.be/" + videoId);
+        return launchDownloader("https://youtu.be/", videoId);
     }
 
     /**
@@ -41,15 +41,30 @@ public final class OfflineDownloadPatch {
      * @return If the download was handled and the original download logic must be skipped.
      */
     public static boolean onMusicDownload(String videoId) {
-        return launchDownloader("https://music.youtube.com/watch?v=" + videoId);
+        return launchDownloader("https://music.youtube.com/watch?v=", videoId);
     }
 
-    private static boolean launchDownloader(String url) {
+    /**
+     * Injection point (YouTube Music).
+     * Called when a playlist or album is added to the downloads.
+     *
+     * @return If the download was handled and the original download logic must be skipped.
+     */
+    public static boolean onMusicPlaylistDownload(String playlistId) {
+        if (playlistId != null && playlistId.startsWith("VL")) {
+            // Browse id of a playlist page.
+            playlistId = playlistId.substring(2);
+        }
+        return launchDownloader("https://music.youtube.com/playlist?list=", playlistId);
+    }
+
+    private static boolean launchDownloader(String urlPrefix, String id) {
         try {
-            if (url.endsWith("=") || url.endsWith("/")) {
-                // No video id available. Let the app handle it.
+            if (id == null || id.isEmpty()) {
+                // No id available. Let the app handle it.
                 return false;
             }
+            String url = urlPrefix + id;
 
             Context context = getContext();
             if (context == null) {

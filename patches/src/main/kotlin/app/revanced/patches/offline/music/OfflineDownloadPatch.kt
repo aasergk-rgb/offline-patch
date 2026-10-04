@@ -15,6 +15,7 @@ import app.revanced.patches.offline.shared.setDownloaderPackageName
 import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.Method
 import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction
+import com.android.tools.smali.dexlib2.iface.instruction.OneRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import com.android.tools.smali.dexlib2.iface.reference.FieldReference
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
@@ -65,6 +66,8 @@ val musicOfflineDownloadPatch = bytecodePatch(
 
         hookImplementations(addVideoReference, "onMusicDownload")
         hookImplementations(addPlaylistReference, "onMusicPlaylistDownload")
+
+        forceDownloadButtonAddPath(addVideoReference.toString(), addPlaylistReference.toString())
 
         // OfflinePlaylistCommand.executeEndpoint(OfflinePlaylistEndpoint, Optional<OfflinePlaylistData>, Map):
         // For ACTION_ADD it only calls add() if the server sent offline data for the playlist (Optional.ifPresent).
@@ -125,6 +128,59 @@ val musicOfflineDownloadPatch = bytecodePatch(
                 """,
             )
         }
+    }
+}
+
+/**
+ * The download button of playlist pages (e.g. own playlists) uses another command resolver.
+ * It calls OfflineVideoManager.add() / OfflinePlaylistManager.add() for the current page
+ * only if offline is available (Premium), otherwise it shows an upsell dialog.
+ * Force the "available" branch, so the hooked add() implementations are reached.
+ *
+ * Verified with YouTube Music 8.40.54 (class `jyl`, method `c`, check `Ljzn;->e()Z`).
+ */
+private fun BytecodePatchContext.forceDownloadButtonAddPath(addVideoReference: String, addPlaylistReference: String) {
+    data class Target(val method: Method, val moveResultIndex: Int, val register: Int)
+
+    val targets = classDefs.flatMap { classDef ->
+        classDef.methods.mapNotNull { method ->
+            if (method.returnType != "V") return@mapNotNull null
+            val instructions = method.implementation?.instructions?.toList() ?: return@mapNotNull null
+
+            fun indexOfCall(opcode: Opcode, reference: String) = instructions.indexOfFirst {
+                it.opcode == opcode && (it as ReferenceInstruction).reference.toString() == reference
+            }
+
+            val addVideoIndex = indexOfCall(Opcode.INVOKE_INTERFACE, addVideoReference)
+            val addPlaylistIndex = indexOfCall(Opcode.INVOKE_INTERFACE_RANGE, addPlaylistReference)
+            if (addVideoIndex < 0 || addPlaylistIndex < 0) return@mapNotNull null
+
+            // The last "boolean check()" call of the app before the add() calls is the availability check.
+            val checkIndex = instructions.subList(0, minOf(addVideoIndex, addPlaylistIndex)).indexOfLast {
+                if (it.opcode != Opcode.INVOKE_VIRTUAL) return@indexOfLast false
+                val reference = (it as ReferenceInstruction).reference as MethodReference
+                reference.returnType == "Z" &&
+                    reference.parameterTypes.isEmpty() &&
+                    !reference.definingClass.startsWith("Ljava/")
+            }
+            if (checkIndex < 0) return@mapNotNull null
+
+            val moveResult = instructions.getOrNull(checkIndex + 1) ?: return@mapNotNull null
+            if (moveResult.opcode != Opcode.MOVE_RESULT) return@mapNotNull null
+
+            Target(method, checkIndex + 1, (moveResult as OneRegisterInstruction).registerA)
+        }
+    }.toList()
+
+    if (targets.isEmpty()) {
+        throw PatchException("Could not find the download button command resolver")
+    }
+
+    targets.forEach { target ->
+        firstMethod(target.method).addInstructions(
+            target.moveResultIndex + 1,
+            "const/4 v${target.register}, 0x1",
+        )
     }
 }
 

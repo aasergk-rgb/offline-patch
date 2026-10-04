@@ -12,6 +12,7 @@ import app.revanced.patches.offline.shared.setDownloaderPackageName
 import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.Method
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
+import com.android.tools.smali.dexlib2.iface.reference.FieldReference
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 
 @Suppress("unused")
@@ -41,12 +42,73 @@ val musicOfflineDownloadPatch = bytecodePatch(
         val addVideoReference = offlineVideoCommandMethod.findAddToDownloadsCall(Opcode.INVOKE_INTERFACE, 4)
 
         val playlistCommandClass = offlinePlaylistCommandMethod.definingClass
-        val addPlaylistReference = classDefs.first { it.type == playlistCommandClass }.methods.firstNotNullOfOrNull {
+        val playlistCommandMethods = classDefs.first { it.type == playlistCommandClass }.methods.toList()
+        val addPlaylistReference = playlistCommandMethods.firstNotNullOfOrNull {
             it.findAddToDownloadsCallOrNull(Opcode.INVOKE_INTERFACE_RANGE, 5)
         } ?: throw PatchException("Could not find the call that adds a playlist to the downloads")
 
         hookImplementations(addVideoReference, "onMusicDownload")
         hookImplementations(addPlaylistReference, "onMusicPlaylistDownload")
+
+        // OfflinePlaylistCommand.executeEndpoint(OfflinePlaylistEndpoint, Optional<OfflinePlaylistData>, Map):
+        // For ACTION_ADD it only calls add() if the server sent offline data for the playlist (Optional.ifPresent).
+        // Playlists without it (e.g. own playlists of non-Premium users) do nothing when the button is tapped,
+        // so the playlist id is sent to the downloader here already.
+        val executeEndpointMethod = playlistCommandMethods.singleOrNull { method ->
+            method.returnType == "V" &&
+                method.parameterTypes.map { it.toString() }.let {
+                    it.size == 3 && it[1] == "Lj\$/util/Optional;" && it[2] == "Ljava/util/Map;"
+                }
+        } ?: throw PatchException("Could not find OfflinePlaylistCommand.executeEndpoint")
+
+        firstMethod(executeEndpointMethod).apply {
+            val instructions = implementation!!.instructions.toList()
+
+            // iget vX, p1, Endpoint->action:I
+            // invoke-static { vX }, Action->forNumber(I)I
+            // move-result vX
+            if (instructions.size < 3 ||
+                instructions[0].opcode != Opcode.IGET ||
+                instructions[1].opcode != Opcode.INVOKE_STATIC ||
+                instructions[2].opcode != Opcode.MOVE_RESULT
+            ) {
+                throw PatchException("Unexpected start of OfflinePlaylistCommand.executeEndpoint")
+            }
+            val actionField = (instructions[0] as ReferenceInstruction).reference as FieldReference
+            val actionNumberMethod = (instructions[1] as ReferenceInstruction).reference as MethodReference
+
+            val endpointType = parameterTypes.first().toString()
+            val playlistIdField = instructions.firstNotNullOfOrNull { instruction ->
+                if (instruction.opcode != Opcode.IGET_OBJECT) return@firstNotNullOfOrNull null
+                ((instruction as ReferenceInstruction).reference as FieldReference).takeIf {
+                    it.definingClass == endpointType && it.type == "Ljava/lang/String;"
+                }
+            } ?: throw PatchException("Could not find the playlist id field")
+
+            // 1 register for "this" + 3 object parameters. v0 and v1 are used.
+            if (implementation!!.registerCount - 4 < 2) {
+                throw PatchException("Not enough free registers in OfflinePlaylistCommand.executeEndpoint")
+            }
+
+            // Action number 2 is ACTION_ADD (the branch that calls add()).
+            addInstructionsWithLabels(
+                0,
+                """
+                    iget v0, p1, $actionField
+                    invoke-static { v0 }, $actionNumberMethod
+                    move-result v0
+                    const/4 v1, 0x2
+                    if-ne v0, v1, :not_add_action
+                    iget-object v0, p1, $playlistIdField
+                    invoke-static { v0 }, $EXTENSION_CLASS_DESCRIPTOR->onMusicPlaylistDownload(Ljava/lang/String;)Z
+                    move-result v0
+                    if-eqz v0, :not_add_action
+                    return-void
+                    :not_add_action
+                    nop
+                """,
+            )
+        }
     }
 }
 

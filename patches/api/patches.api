@@ -1,4 +1,8 @@
-public final class app/revanced/patches/example/ExamplePatchKt {
-	public static final fun getExamplePatch ()Lapp/revanced/patcher/patch/BytecodePatch;
+public final class app/revanced/patches/offline/music/OfflineDownloadPatchKt {
+	public static final fun getMusicOfflineDownloadPatch ()Lapp/revanced/patcher/patch/Patch;
+}
+
+public final class app/revanced/patches/offline/youtube/OfflineDownloadPatchKt {
+	public static final fun getYouTubeOfflineDownloadPatch ()Lapp/revanced/patcher/patch/Patch;
 }
 

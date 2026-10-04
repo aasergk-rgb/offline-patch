@@ -1,5 +1,9 @@
 [versions]
-revanced-patcher = "21.0.0"
+# Must match the major version used by ReVanced Manager (v2.6.x uses patcher 22).
+revanced-patcher = "22.0.0"
 # Tracking https://github.com/google/smali/issues/64.
 #noinspection GradleDependency
-smali = "3.0.5"
+smali = "3.0.8"
+
+[plugins]
+android-library = { id = "com.android.library" }

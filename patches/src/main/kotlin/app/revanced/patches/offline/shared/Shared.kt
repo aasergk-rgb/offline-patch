@@ -33,6 +33,27 @@ internal val BytecodePatchContext.getDownloaderPackageNameMethod by gettingFirst
     parameterTypes()
 }
 
+internal val BytecodePatchContext.isDebugMethod by gettingFirstMethodDeclaratively {
+    name("isDebug")
+    definingClass(EXTENSION_CLASS_DESCRIPTOR)
+    accessFlags(AccessFlags.PRIVATE, AccessFlags.STATIC)
+    returnType("Z")
+    parameterTypes()
+}
+
+/**
+ * Makes the extension show debug toasts.
+ */
+internal fun BytecodePatchContext.enableDebugToasts() {
+    isDebugMethod.addInstructions(
+        0,
+        """
+            const/4 v0, 0x1
+            return v0
+        """,
+    )
+}
+
 /**
  * Makes the extension return [packageName] as the downloader package name.
  */

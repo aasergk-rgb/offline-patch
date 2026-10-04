@@ -37,3 +37,16 @@ internal val BytecodePatchContext.offlinePlaylistCommandMethod by gettingFirstMe
         "Object is not an offlineable playlist: "(String::contains),
     )
 }
+
+/**
+ * Static helper that calls `CommandResolver.resolve(command, map)` for the resolved command handler.
+ *
+ * Verified with YouTube Music 8.40.54 (class `ancn`, method `g(Lancs;Lbmme;Ljava/util/Map;)Z`).
+ */
+internal val BytecodePatchContext.resolveCommandMethod by gettingFirstMethodDeclaratively {
+    returnType("Z")
+    parameterTypes("L", "L", "Ljava/util/Map;")
+    instructions(
+        "CommandResolver threw exception during resolution"(),
+    )
+}

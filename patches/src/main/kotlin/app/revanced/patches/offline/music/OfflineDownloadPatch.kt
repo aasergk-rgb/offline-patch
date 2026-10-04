@@ -1,16 +1,20 @@
 package app.revanced.patches.offline.music
 
+import app.revanced.patcher.extensions.addInstructions
 import app.revanced.patcher.extensions.addInstructionsWithLabels
 import app.revanced.patcher.firstMethod
 import app.revanced.patcher.patch.BytecodePatchContext
 import app.revanced.patcher.patch.PatchException
+import app.revanced.patcher.patch.booleanOption
 import app.revanced.patcher.patch.bytecodePatch
 import app.revanced.patches.offline.shared.EXTENSION_CLASS_DESCRIPTOR
 import app.revanced.patches.offline.shared.EXTENSION_PATH
 import app.revanced.patches.offline.shared.downloaderPackageNameOption
+import app.revanced.patches.offline.shared.enableDebugToasts
 import app.revanced.patches.offline.shared.setDownloaderPackageName
 import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.Method
+import com.android.tools.smali.dexlib2.iface.instruction.FiveRegisterInstruction
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import com.android.tools.smali.dexlib2.iface.reference.FieldReference
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
@@ -31,8 +35,20 @@ val musicOfflineDownloadPatch = bytecodePatch(
 
     val downloaderPackageName by downloaderPackageNameOption()()
 
+    val debugToasts by booleanOption(
+        default = false,
+        name = "Debug toasts",
+        description = "Shows a toast for every resolved command and every download hook. " +
+            "Only useful to find out why a download button does not work.",
+    )
+
     apply {
         setDownloaderPackageName(downloaderPackageName)
+
+        if (debugToasts == true) {
+            enableDebugToasts()
+            hookCommandResolvers()
+        }
 
         // The commands only resolve the endpoint and then call an interface method of the offline managers:
         // OfflineVideoManager.add(String videoId, OfflineVideoData, Identity, OfflineMode) and
@@ -108,6 +124,42 @@ val musicOfflineDownloadPatch = bytecodePatch(
                     nop
                 """,
             )
+        }
+    }
+}
+
+/**
+ * Calls the extension before every `CommandResolver.resolve(command, map)` call,
+ * so it can show which resolver handles a command.
+ */
+private fun BytecodePatchContext.hookCommandResolvers() {
+    val resolveInstruction = resolveCommandMethod.implementation!!.instructions.firstOrNull {
+        it.opcode == Opcode.INVOKE_INTERFACE
+    } ?: throw PatchException("Could not find the CommandResolver.resolve call")
+    val resolveReference = ((resolveInstruction as ReferenceInstruction).reference as MethodReference).toString()
+
+    val callSites = classDefs.flatMap { classDef ->
+        classDef.methods.mapNotNull { method ->
+            val indices = method.implementation?.instructions?.mapIndexedNotNull { index, instruction ->
+                index.takeIf {
+                    instruction.opcode == Opcode.INVOKE_INTERFACE &&
+                        (instruction as ReferenceInstruction).reference.toString() == resolveReference
+                }
+            }
+            if (indices.isNullOrEmpty()) null else method to indices
+        }
+    }.toList()
+
+    callSites.forEach { (method, indices) ->
+        firstMethod(method).apply {
+            indices.sortedDescending().forEach { index ->
+                val call = implementation!!.instructions[index] as FiveRegisterInstruction
+                addInstructions(
+                    index,
+                    "invoke-static { v${call.registerC}, v${call.registerD} }, " +
+                        "$EXTENSION_CLASS_DESCRIPTOR->debugCommand(Ljava/lang/Object;Ljava/lang/Object;)V",
+                )
+            }
         }
     }
 }

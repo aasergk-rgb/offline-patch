@@ -4,6 +4,8 @@ import android.app.Application;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -25,6 +27,38 @@ public final class OfflineDownloadPatch {
     }
 
     /**
+     * If debug toasts are shown.
+     * The return value is replaced at patch time by the "Debug toasts" patch option.
+     */
+    private static boolean isDebug() {
+        return false;
+    }
+
+    /**
+     * Injection point (YouTube Music, only patched in if debug toasts are enabled).
+     * Called for every command (endpoint) that is resolved, e.g. when a button is tapped.
+     */
+    public static void debugCommand(Object resolver, Object command) {
+        try {
+            String resolverName = resolver == null ? "null" : resolver.getClass().getName();
+            String commandName = command == null ? "null" : command.getClass().getName();
+            Log.d(TAG, "Command resolved by " + resolverName + ": " + commandName + " " + command);
+            debugToast("Command: " + resolverName + " (" + commandName + ")");
+        } catch (Exception ex) {
+            Log.e(TAG, "debugCommand failure", ex);
+        }
+    }
+
+    private static void debugToast(String message) {
+        if (!isDebug()) return;
+
+        Context context = getContext();
+        if (context == null) return;
+
+        new Handler(Looper.getMainLooper()).post(() -> showToast(context, message));
+    }
+
+    /**
      * Injection point (YouTube).
      * Called when the in-app download button or the "Download" flyout menu item is used.
      *
@@ -41,6 +75,7 @@ public final class OfflineDownloadPatch {
      * @return If the download was handled and the original download logic must be skipped.
      */
     public static boolean onMusicDownload(String videoId) {
+        debugToast("onMusicDownload: " + videoId);
         return launchDownloader("https://music.youtube.com/watch?v=", videoId);
     }
 
@@ -51,6 +86,7 @@ public final class OfflineDownloadPatch {
      * @return If the download was handled and the original download logic must be skipped.
      */
     public static boolean onMusicPlaylistDownload(String playlistId) {
+        debugToast("onMusicPlaylistDownload: " + playlistId);
         if (playlistId != null && playlistId.startsWith("VL")) {
             // Browse id of a playlist page.
             playlistId = playlistId.substring(2);
@@ -105,7 +141,7 @@ public final class OfflineDownloadPatch {
 
     private static void showToast(Context context, String message) {
         try {
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show();
         } catch (Exception ex) {
             // Not called from a looper thread.
             Log.w(TAG, "Failed to show toast", ex);
